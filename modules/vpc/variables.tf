@@ -32,3 +32,9 @@ variable "tags" {
   description = "Resource tags"
   default     = {}
 }
+
+variable "single_nat_gateway" {
+  type        = bool
+  description = "Provision a single shared NAT gateway for dev/staging cost savings"
+  default     = false
+}

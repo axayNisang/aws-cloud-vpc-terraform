@@ -67,3 +67,140 @@ resource "aws_subnet" "private" {
     }
   )
 }
+
+# Elastic IPs for NAT Gateways
+resource "aws_eip" "nat" {
+  count  = var.single_nat_gateway ? 1 : length(var.public_subnet_cidrs)
+  domain = "vpc"
+
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.environment}-nat-eip-${count.index + 1}"
+    }
+  )
+}
+
+# NAT Gateways placed in Public Subnets
+resource "aws_nat_gateway" "nat" {
+  count         = var.single_nat_gateway ? 1 : length(var.public_subnet_cidrs)
+  allocation_id = aws_eip.nat[count.index].id
+  subnet_id     = aws_subnet.public[count.index].id
+
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.environment}-nat-gw-${count.index + 1}"
+    }
+  )
+
+  depends_on = [aws_internet_gateway.gw]
+}
+
+# Public Route Table
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.gw.id
+  }
+
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.environment}-public-rt"
+    }
+  )
+}
+
+resource "aws_route_table_association" "public" {
+  count          = length(var.public_subnet_cidrs)
+  subnet_id      = aws_subnet.public[count.index].id
+  route_table_id = aws_route_table.public.id
+}
+
+# Private Route Tables (routed through corresponding NAT Gateways)
+resource "aws_route_table" "private" {
+  count  = var.single_nat_gateway ? 1 : length(var.private_subnet_cidrs)
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = var.single_nat_gateway ? aws_nat_gateway.nat[0].id : aws_nat_gateway.nat[count.index].id
+  }
+
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.environment}-private-rt-${count.index + 1}"
+    }
+  )
+}
+
+resource "aws_route_table_association" "private" {
+  count          = length(var.private_subnet_cidrs)
+  subnet_id      = aws_subnet.private[count.index].id
+  route_table_id = var.single_nat_gateway ? aws_route_table.private[0].id : aws_route_table.private[count.index].id
+}
+
+# CloudWatch Flow Logs for audit & security compliance
+resource "aws_cloudwatch_log_group" "flow_log" {
+  name              = "/aws/vpc-flow-logs/${var.environment}"
+  retention_in_days = 30
+
+  tags = var.tags
+}
+
+resource "aws_iam_role" "flow_log" {
+  name = "${var.environment}-vpc-flow-log-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "vpc-flow-logs.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "flow_log" {
+  name = "${var.environment}-vpc-flow-log-policy"
+  role = aws_iam_role.flow_log.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogGroups",
+          "logs:DescribeLogStreams"
+        ]
+        Effect   = "Allow"
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_flow_log" "main" {
+  iam_role_arn    = aws_iam_role.flow_log.arn
+  log_destination = aws_cloudwatch_log_group.flow_log.arn
+  traffic_type    = "ALL"
+  vpc_id          = aws_vpc.main.id
+
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.environment}-flow-log"
+    }
+  )
+}
