@@ -38,3 +38,9 @@ variable "single_nat_gateway" {
   description = "Provision a single shared NAT gateway for dev/staging cost savings"
   default     = false
 }
+
+variable "database_subnet_cidrs" {
+  type        = list(string)
+  description = "CIDR blocks for isolated DB tier subnets"
+  default     = ["10.0.100.0/24", "10.0.200.0/24", "10.0.210.0/24"]
+}
