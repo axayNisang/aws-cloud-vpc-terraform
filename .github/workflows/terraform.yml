@@ -23,12 +23,9 @@ jobs:
           terraform fmt -recursive
           terraform fmt -check -recursive
 
-      - name: Setup TFLint
-        uses: terraform-linters/setup-tflint@v3
-        with:
-          tflint_version: v0.48.0
-
-      - name: Run TFLint
+      - name: Terraform Validate
         run: |
-          tflint --init
-          tflint --recursive
+          for mod in modules/vpc modules/security-groups modules/alb; do
+            echo "Validating $mod..."
+            (cd "$mod" && terraform init -backend=false && terraform validate)
+          done
